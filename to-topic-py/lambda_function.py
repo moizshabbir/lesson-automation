@@ -1,8 +1,8 @@
-import json, requests, boto3, os, re, base64, random, string, subprocess
+import json, requests, boto3, os, re, base64, random, string, subprocess, io
 from boto3 import Session
 from botocore.exceptions import BotoCoreError, ClientError
 from text_to_audio import lambda_handler_2
-from extract_images import lambda_handler3
+from PIL import Image
 
 def lambda_handler(event, context):
     
@@ -13,7 +13,6 @@ def lambda_handler(event, context):
     )
     s3 = session.client("s3")
     polly = session.client("polly")
-    
     
     bucket = event['Records'][0]['s3']['bucket']['name']
     key = event['Records'][0]['s3']['object']['key']
@@ -28,6 +27,7 @@ def lambda_handler(event, context):
       add_topic_api = os.environ['qa_add_topic_api']
       update_topic_api = os.environ['qa_update_topic_api']
       media_bucket = "qa-media.hazwoper-osha.com"
+      temp_img_bucket = "to-html-py"
       
     elif folder_name == "live":
       add_topic_api = os.environ['live_add_topic_api']
@@ -139,18 +139,41 @@ def lambda_handler(event, context):
           "media_bucket": media_bucket,
           "s3": s3
         }
-        obj = lambda_handler3(obj)
-        data, url, img_key = obj["data"], obj["url"], obj["img_key"]
+        frame_reg = r'<strong\b[^>]*>(?:<img\s+[^>]*src\s*=\s*["\']([^"\']+)["\'][^>]*>)</strong>'
+        frame_match = re.findall(frame_reg, data)
+        frame_data = ''
+        if frame_match:
+          frame_data = base64.b64decode(frame_match[0].split(',')[1])
+          data = re.sub(frame_reg, '', data)
+          
+        t_img_key = f"qa/base64_images/{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}"
+        for i, img in enumerate(re.findall(r'<img\s+[^>]*src\s*=\s*["\']([^"\']+)["\'][^>]*>', data)):
+          base64_str = img.split(',')[1]
+          img_data = base64.b64decode(base64_str)
+          
+          url = img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}")+f"_{i}.png"
+          # replace src with url
+          data = data.replace('src="{}"'.format(img), 'src="{}"'.format(url))
+          s3.put_object(Body=img_data, Bucket = temp_img_bucket, Key= t_img_key+f"_{i}.png", ContentType='image/png')
+        
+        # for frame image
+        if frame_data:
+          img_data = frame_data
+        
+        s3.put_object(Body=img_data, Bucket = temp_img_bucket, Key= t_img_key+f"_m.png", ContentType='image/png')
+        t_key = img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}")
+        data, url, img_key = data, f"https://{media_bucket}/{t_key}_m.png", t_key+"_m.png" 
       else:
-        base64_str = re.search(r'data:image\/(\w+);base64,([^\"]+)', data).group(2)
-        png_data = base64.b64decode(base64_str)
-        
-        img_key = img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}.png")
-        
-        s3.put_object(Body=png_data, Bucket=media_bucket, Key=img_key)
-        url = "https://"+media_bucket+"/"+img_key
-        data = re.sub(r'<img[^>]+>', '', data)
-        
+        for i, img in enumerate(re.findall(r'<img\s+[^>]*src\s*=\s*["\']([^"\']+)["\'][^>]*>', data)):
+          # base64_str = re.search(r'data:image\/(\w+);base64,([^\"]+)', data).group(2)
+          png_data = base64.b64decode(img.split(',')[1])
+          img_key_l = img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}_{i}.png")
+          
+          s3.put_object(Body=png_data, Bucket=media_bucket, Key=img_key_l, ContentType='image/png')
+          url = "https://"+media_bucket+"/"+img_key_l
+          data = data.replace('src="{}"'.format(img), 'src="{}"'.format(img_key_l))
+        # data = re.sub(r'<img[^>]+>', '', data)
+        img_key = img_key_l
       topic_data_payload['topic_data']['rightDiv']['image']['isImage'] = True
       topic_data_payload['topic_data']['rightDiv']['image']["imageURL"] = topic_data_payload['topic_data']['rightDiv']['image']["imageFile"] = url
       topic_data_payload['topic_data']['rightDiv']['image']["imageName"] = img_key
@@ -169,6 +192,8 @@ def lambda_handler(event, context):
     html = re.sub(f_h1, '', data1)
     html = n_line.sub("\n", html)
     text = re.sub(cleanr, '', html)
+    text = re.sub(r'<img[^>]+>', '', text)
+    
     split_text = re.split(r'(?<!\d)\.(?!\d\s)|(?<=\d)\.(?=\s\d)', text)
     res_text = []
     
@@ -215,4 +240,3 @@ def lambda_handler(event, context):
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
       }
-  
