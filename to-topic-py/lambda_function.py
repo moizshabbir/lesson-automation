@@ -42,7 +42,7 @@ def lambda_handler(event, context):
     course_id, module_id, lesson_id = id_arr[1], id_arr[2], id_arr[3]
     pos = id_arr[4].split('.')[0]
     
-    f_h1 = r"<h1>(.*?)</h1>"
+    f_h1 = r"<h1>(?:<[^>]+>)*(.*?)(?:<[^>]+>)*</h1>"
 
     # Use regex to search for the first h1 tag and extract its text
     match = re.search(f_h1, data)
@@ -139,7 +139,7 @@ def lambda_handler(event, context):
           "media_bucket": media_bucket,
           "s3": s3
         }
-        frame_reg = r'<strong\b[^>]*>(?:<img\s+[^>]*src\s*=\s*["\']([^"\']+)["\'][^>]*>)</strong>'
+        frame_reg = r'<h6\b[^>]*>(?:<img\s+[^>]*src\s*=\s*["\']([^"\']+)["\'][^>]*>)</h6>'
         frame_match = re.findall(frame_reg, data)
         frame_data = ''
         if frame_match:
@@ -151,7 +151,7 @@ def lambda_handler(event, context):
           base64_str = img.split(',')[1]
           img_data = base64.b64decode(base64_str)
           
-          url = img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}")+f"_{i}.png"
+          url =  f"https://{media_bucket}/" + img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}")+f"_{i}.png"
           # replace src with url
           data = data.replace('src="{}"'.format(img), 'src="{}"'.format(url))
           s3.put_object(Body=img_data, Bucket = temp_img_bucket, Key= t_img_key+f"_{i}.png", ContentType='image/png')
@@ -159,10 +159,12 @@ def lambda_handler(event, context):
         # for frame image
         if frame_data:
           img_data = frame_data
-        
-        s3.put_object(Body=img_data, Bucket = temp_img_bucket, Key= t_img_key+f"_m.png", ContentType='image/png')
-        t_key = img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}")
-        data, url, img_key = data, f"https://{media_bucket}/{t_key}_m.png", t_key+"_m.png" 
+          s3.put_object(Body=img_data, Bucket = temp_img_bucket, Key= t_img_key+f"_m.png", ContentType='image/png')
+          t_key = img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}")
+          data, url, img_key = data, f"https://{media_bucket}/{t_key}_m.png", t_key+"_m.png"
+        else:
+          img_key = url = ""
+          
       else:
         for i, img in enumerate(re.findall(r'<img\s+[^>]*src\s*=\s*["\']([^"\']+)["\'][^>]*>', data)):
           # base64_str = re.search(r'data:image\/(\w+);base64,([^\"]+)', data).group(2)
@@ -186,7 +188,6 @@ def lambda_handler(event, context):
     data = re.sub(f_h1, '', data1)
     topic_data_payload['topic_data']['leftDiv']['editor'] = topic_data_payload['topic_data']['leftDiv']['editorSaved'] = topic_data_payload['topic_data']['rightDiv']['editor'] = topic_data_payload['topic_data']['rightDiv']['editorSaved'] = data
     n_line_p = re.compile(r"</p>")
-    #if folder_name == "qa":
     cleanr = re.compile('<.*?>')
     n_line = re.compile(r"</li>|</p>|</h[234]>")
     html = re.sub(f_h1, '', data1)
@@ -204,6 +205,9 @@ def lambda_handler(event, context):
     text = ". ".join(res_text)
       
     text = name.strip()+". "+text
+    # if folder_name == "qa":
+    text = text.replace(" etc.", " etcetera.")
+    
     aud_key = f"assets/audios/{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}.mp3"
     ret = lambda_handler_2({
       "mytext": text,
