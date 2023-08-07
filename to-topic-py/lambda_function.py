@@ -22,12 +22,11 @@ def lambda_handler(event, context):
     letters = string.ascii_letters + string.digits
     response = s3.get_object(Bucket=bucket, Key=key)
     data = response['Body'].read().decode('utf-8')
-    
+    temp_img_bucket = "to-html-py"
     if folder_name == "qa":
       add_topic_api = os.environ['qa_add_topic_api']
       update_topic_api = os.environ['qa_update_topic_api']
       media_bucket = "qa-media.hazwoper-osha.com"
-      temp_img_bucket = "to-html-py"
       
     elif folder_name == "live":
       add_topic_api = os.environ['live_add_topic_api']
@@ -132,50 +131,38 @@ def lambda_handler(event, context):
     
     result_str = ''.join(random.choice(letters) for i in range(10))
     if img_match:
-      if folder_name == "qa":
-        obj = {
-          "data": data,
-          "key": img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}"),
-          "media_bucket": media_bucket,
-          "s3": s3
-        }
-        frame_reg = r'<h6\b[^>]*>(?:<img\s+[^>]*src\s*=\s*["\']([^"\']+)["\'][^>]*>)</h6>'
-        frame_match = re.findall(frame_reg, data)
-        frame_data = ''
-        if frame_match:
-          frame_data = base64.b64decode(frame_match[0].split(',')[1])
-          data = re.sub(frame_reg, '', data)
-          
-        t_img_key = f"qa/base64_images/{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}"
-        for i, img in enumerate(re.findall(r'<img\s+[^>]*src\s*=\s*["\']([^"\']+)["\'][^>]*>', data)):
-          base64_str = img.split(',')[1]
-          img_data = base64.b64decode(base64_str)
-          
-          url =  f"https://{media_bucket}/" + img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}")+f"_{i}.png"
-          # replace src with url
-          data = data.replace('src="{}"'.format(img), 'src="{}"'.format(url))
-          s3.put_object(Body=img_data, Bucket = temp_img_bucket, Key= t_img_key+f"_{i}.png", ContentType='image/png')
+      obj = {
+        "data": data,
+        "key": img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}"),
+        "media_bucket": media_bucket,
+        "s3": s3
+      }
+      frame_reg = r'<h6\b[^>]*>(?:<img\s+[^>]*src\s*=\s*["\']([^"\']+)["\'][^>]*>)</h6>'
+      frame_match = re.findall(frame_reg, data)
+      frame_data = ''
+      if frame_match:
+        frame_data = base64.b64decode(frame_match[0].split(',')[1])
+        data = re.sub(frame_reg, '', data)
         
-        # for frame image
-        if frame_data:
-          img_data = frame_data
-          s3.put_object(Body=img_data, Bucket = temp_img_bucket, Key= t_img_key+f"_m.png", ContentType='image/png')
-          t_key = img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}")
-          data, url, img_key = data, f"https://{media_bucket}/{t_key}_m.png", t_key+"_m.png"
-        else:
-          img_key = url = ""
-          
+      t_img_key = f"qa/base64_images/{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}"
+      for i, img in enumerate(re.findall(r'<img\s+[^>]*src\s*=\s*["\']([^"\']+)["\'][^>]*>', data)):
+        base64_str = img.split(',')[1]
+        img_data = base64.b64decode(base64_str)
+        
+        url =  f"https://{media_bucket}/" + img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}")+f"_{i}.png"
+        # replace src with url
+        data = data.replace('src="{}"'.format(img), 'src="{}"'.format(url))
+        s3.put_object(Body=img_data, Bucket = temp_img_bucket, Key= t_img_key+f"_{i}.png", ContentType='image/png')
+      
+      # for frame image
+      if frame_data:
+        img_data = frame_data
+        s3.put_object(Body=img_data, Bucket = temp_img_bucket, Key= t_img_key+f"_m.png", ContentType='image/png')
+        t_key = img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}")
+        data, url, img_key = data, f"https://{media_bucket}/{t_key}_m.png", t_key+"_m.png"
       else:
-        for i, img in enumerate(re.findall(r'<img\s+[^>]*src\s*=\s*["\']([^"\']+)["\'][^>]*>', data)):
-          # base64_str = re.search(r'data:image\/(\w+);base64,([^\"]+)', data).group(2)
-          png_data = base64.b64decode(img.split(',')[1])
-          img_key_l = img_key.format(f"{course_id}_{module_id}_{lesson_id}_{pos}_{result_str}_{i}.png")
-          
-          s3.put_object(Body=png_data, Bucket=media_bucket, Key=img_key_l, ContentType='image/png')
-          url = "https://"+media_bucket+"/"+img_key_l
-          data = data.replace('src="{}"'.format(img), 'src="{}"'.format(img_key_l))
-        # data = re.sub(r'<img[^>]+>', '', data)
-        img_key = img_key_l
+        img_key = url = ""
+
       topic_data_payload['topic_data']['rightDiv']['image']['isImage'] = True
       topic_data_payload['topic_data']['rightDiv']['image']["imageURL"] = topic_data_payload['topic_data']['rightDiv']['image']["imageFile"] = url
       topic_data_payload['topic_data']['rightDiv']['image']["imageName"] = img_key
@@ -244,3 +231,4 @@ def lambda_handler(event, context):
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
       }
+  
